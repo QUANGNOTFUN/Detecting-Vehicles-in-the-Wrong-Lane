@@ -1,6 +1,9 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 from PIL import Image, ImageTk
+from .report_screen import ReportScreen
+from .configuration_screen import ConfigurationScreen
+from .main_screen import MainScreen
 
 class MainView:
     def __init__(self, root, viewmodel):
@@ -9,58 +12,58 @@ class MainView:
         self.root.title("YOLOv8 Object Detection")
         self.root.geometry("900x600")
 
-        # Bind ViewModel commands
+        # Bind ViewModel callbacks
         self.viewmodel.set_update_frame_callback(self.update_frame)
         self.viewmodel.set_error_callback(self.show_error)
+        self.viewmodel.set_update_violations_callback(self.update_violations)
 
-        self.create_widgets()
+        # Tạo container cho các màn hình
+        self.container = tk.Frame(self.root)
+        self.container.pack(fill="both", expand=True)
+
+        # Tạo các màn hình
+        self.frames = {}
+        self.frame_classes = {
+            "MainScreen": MainScreen,
+            "ReportScreen": ReportScreen,
+            "ConfigurationScreen": ConfigurationScreen
+        }
+        
+        for name, F in self.frame_classes.items():
+            frame = F(self.container, self)
+            self.frames[name] = frame
+            frame.grid(row=0, column=0, sticky="nsew")
+
+        self.show_frame("MainScreen")
+
+    def show_frame(self, frame_name):
+        """Hiển thị màn hình được chọn."""
+        frame = self.frames[frame_name]
+        frame.tkraise()
 
     def create_widgets(self):
-        # Video label
-        self.video_label = tk.Label(self.root)
-        self.video_label.pack(pady=10)
-
-        # Button frame
-        self.button_frame = tk.Frame(self.root)
-        self.button_frame.pack(pady=10)
-
-        # Buttons
-        self.start_button = tk.Button(
-            self.button_frame, text="Start Camera", command=self.viewmodel.start_camera, width=15
-        )
-        self.start_button.grid(row=0, column=0, padx=5)
-
-        self.stop_button = tk.Button(
-            self.button_frame, text="Stop Camera", command=self.viewmodel.stop_camera, width=15
-        )
-        self.stop_button.grid(row=0, column=1, padx=5)
-        self.stop_button.config(state="disabled")
-
-        self.exit_button = tk.Button(
-            self.button_frame, text="Exit", command=self.viewmodel.exit_app, width=15
-        )
-        self.exit_button.grid(row=0, column=2, padx=5)
+        # Di chuyển vào MainScreen
+        pass
 
     def update_frame(self, frame):
         """Cập nhật frame lên giao diện."""
-        if frame is not None:
-            img = Image.fromarray(frame)
-            img = img.resize((640, 480), Image.LANCZOS)
-            imgtk = ImageTk.PhotoImage(image=img)
-            self.video_label.imgtk = imgtk
-            self.video_label.configure(image=imgtk)
-        else:
-            self.video_label.configure(image="")
+        if self.frames["MainScreen"].winfo_viewable():
+            self.frames["MainScreen"].update_frame(frame)
 
     def show_error(self, message):
         """Hiển thị thông báo lỗi."""
         messagebox.showerror("Error", message)
 
+    def update_violations(self, violation):
+        """Cập nhật danh sách vi phạm."""
+        if self.frames["MainScreen"].winfo_viewable():
+            self.frames["MainScreen"].update_violations(violation)
+
     def update_button_states(self, is_running):
-        """Cập nhật trạng thái nút."""
-        self.start_button.config(state="normal" if is_running else "disabled")
-        self.stop_button.config(state="disabled" if is_running else "normal")
+        """Cập nhật trạng thái nút (không dùng trực tiếp ở đây)."""
+        pass
 
     def close(self):
         """Đóng ứng dụng."""
+        self.viewmodel.exit_app()
         self.root.quit()
