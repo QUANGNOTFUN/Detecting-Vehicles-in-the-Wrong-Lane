@@ -37,33 +37,29 @@ class MainView:
         self.show_frame("MainScreen")
 
     def show_frame(self, frame_name):
-        """Hiển thị màn hình được chọn."""
+        # Unchanged
         frame = self.frames[frame_name]
         frame.tkraise()
 
     def create_widgets(self):
-        # Di chuyển vào MainScreen
+        # Unchanged
         pass
 
     def update_frame(self, frame):
-        """Cập nhật frame lên giao diện."""
+        # Unchanged
         if self.frames["MainScreen"].winfo_viewable():
             self.frames["MainScreen"].update_frame(frame)
 
     def show_error(self, message):
-        """Hiển thị thông báo lỗi."""
+        # Unchanged
         messagebox.showerror("Error", message)
 
     def update_violations(self, violation):
-        """Cập nhật danh sách vi phạm."""
+        # Unchanged
         if self.frames["MainScreen"].winfo_viewable():
             self.frames["MainScreen"].update_violations(violation)
 
-    def update_button_states(self, is_running):
-        """Cập nhật trạng thái nút (không dùng trực tiếp ở đây)."""
-        pass
-
     def close(self):
-        """Đóng ứng dụng."""
+        # Unchanged
         self.viewmodel.exit_app()
         self.root.quit()
