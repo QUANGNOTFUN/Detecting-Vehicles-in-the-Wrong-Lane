@@ -3,17 +3,17 @@ import csv
 import os
 
 def save_violation(violation):
-    # Unchanged
     file_exists = os.path.isfile('violations.csv')
     with open('violations.csv', 'a', newline='') as file:
         writer = csv.writer(file)
         if not file_exists:
-            writer.writerow(['Timestamp', 'Vehicle Type', 'Lane ID', 'Image Path'])
+            writer.writerow(['Timestamp', 'Vehicle Type', 'Lane ID', 'Image Path', 'License Plate'])
         writer.writerow([
             violation['timestamp'],
             violation['vehicle_type'],
             violation['lane_id'],
-            violation['image_path']
+            violation['image_path'],
+            violation['license_plate']
         ])
 
 class YoloViewModel:
@@ -25,19 +25,15 @@ class YoloViewModel:
         self.update_violations_callback = None
 
     def set_update_frame_callback(self, callback):
-        # Unchanged
         self.update_frame_callback = callback
 
     def set_error_callback(self, callback):
-        # Unchanged
         self.error_callback = callback
 
     def set_update_violations_callback(self, callback):
-        # Unchanged
         self.update_violations_callback = callback
 
     def start_camera(self):
-        """Bắt đầu camera."""
         if not self.running:
             try:
                 self.model.start_camera()
@@ -48,7 +44,6 @@ class YoloViewModel:
                     self.error_callback(str(e))
 
     def start_video(self, video_path):
-        """Bắt đầu xử lý video file."""
         if not self.running:
             try:
                 self.model.start_camera(video_path=video_path)
@@ -59,7 +54,6 @@ class YoloViewModel:
                     self.error_callback(str(e))
 
     def stop_camera(self):
-        """Dừng camera hoặc video."""
         if self.running:
             self.running = False
             self.model.stop_camera()
@@ -67,7 +61,6 @@ class YoloViewModel:
                 self.update_frame_callback(None)
 
     def process_frames(self):
-        # Unchanged
         while self.running and self.model.is_camera_running():
             frame, violations = self.model.get_frame()
             if frame is None:
@@ -79,11 +72,12 @@ class YoloViewModel:
                     self.update_violations_callback(violation)
             if self.update_frame_callback:
                 self.update_frame_callback(frame)
-        if self.running:
-            self.stop_camera()
+        self.stop_camera()
 
     def exit_app(self):
-        # Unchanged
         if self.running:
             self.stop_camera()
         self.model.stop_camera()
+
+    def update_lane_config(self, config_data):
+        self.model.update_lane_config(config_data)

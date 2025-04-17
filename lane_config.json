@@ -1,0 +1,24 @@
+{
+  "detection_threshold": 0.5,
+  "num_lanes": 2,
+  "lanes": [
+    {
+      "lane_id": 1,
+      "x_min": 0,
+      "x_max": 213,
+      "allowed_vehicles": [
+        3
+      ]
+    },
+    {
+      "lane_id": 2,
+      "x_min": 213,
+      "x_max": 426,
+      "allowed_vehicles": [
+        2,
+        5,
+        7
+      ]
+    }
+  ]
+}
