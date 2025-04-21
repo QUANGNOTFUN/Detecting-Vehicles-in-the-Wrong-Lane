@@ -1,7 +1,7 @@
 import dearpygui.dearpygui as dpg
 from src.model.yolo_model import YoloModel
-from src.viewmodel.yolo_viewmodel import YoloViewModel
-from src.view.main_screen import MainScreen
+from feature.display.displayViewmodel import YoloViewModel
+from base.mainScreen import MainScreen
 
 if __name__ == "__main__":
 

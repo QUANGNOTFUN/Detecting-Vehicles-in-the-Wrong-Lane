@@ -14,7 +14,13 @@ class MainScreen:
     def setup_gui(self):
         # Initialize DearPyGui
         dpg.create_context()
-        dpg.create_viewport(title="Vehicle Detection System", width=1024, height=768)
+        dpg.create_viewport(
+            title="Vehicle Detection System",
+            width=1280,
+            height=720,
+            resizable=True
+        )
+
         dpg.setup_dearpygui()
 
         # Main Window
