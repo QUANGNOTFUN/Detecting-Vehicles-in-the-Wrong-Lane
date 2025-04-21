@@ -241,3 +241,6 @@ class YoloModel:
 
     def is_camera_running(self):
         return self.cap is not None and self.cap.isOpened()
+
+    def detect(self, frame):
+        return self.model(frame)

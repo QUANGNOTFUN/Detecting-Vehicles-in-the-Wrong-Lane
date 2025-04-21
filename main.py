@@ -1,14 +1,11 @@
-import dearpygui.dearpygui as dpg
-from src.model.yolo_model import YoloModel
-from feature.display.displayViewmodel import YoloViewModel
-from base.mainScreen import MainScreen
+# app.py
+from src.ui.base.main_screen import MainScreen
+from src.ui.base.main_view_model import MainViewModel
 
 if __name__ == "__main__":
-
-    model = YoloModel(model_path="assets/yolov8n.pt")
-
-    viewmodel = YoloViewModel(model)
-
-    app = MainScreen(viewmodel)
+    # Tạo ViewModel cho MainScreen
+    main_view_model = MainViewModel()
     
+    # Tạo MainScreen và chạy ứng dụng
+    app = MainScreen(main_view_model)
     app.run()
