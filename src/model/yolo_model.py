@@ -6,14 +6,8 @@ import datetime
 from paddleocr import PaddleOCR
 
 class YoloModel:
-    def update_button_states(self, running):
-        return {
-            "start_button": "disabled" if running else "normal",
-            "video_button": "disabled" if running else "normal",
-            "stop_button": "normal" if running else "disabled"
-        }
     def __init__(self, model_path):
-        self.model = YOLO(model_path)  # yolov8n.pt (đã huấn luyện để phát hiện biển số)
+        self.model = YOLO(model_path)
         self.cap = None
         self.lane_lines = None
         self.video_path = None
@@ -21,7 +15,11 @@ class YoloModel:
         self.lane_config = None
         self.detection_threshold = 0.5
         self.non_vehicle_classes = [0, 1]  # person, bicycle (COCO dataset)
-        self.ocr = PaddleOCR(use_angle_cls=True, lang="en")  # Khởi tạo PaddleOCR
+        try:
+            self.ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+        except Exception as e:
+            print(f"Warning: PaddleOCR initialization failed: {e}")
+            self.ocr = None
 
     def update_lane_config(self, config_data):
         self.lane_config = config_data["lanes"]
@@ -95,6 +93,9 @@ class YoloModel:
     def detect_license_plates(self, frame, results):
         """Phát hiện và đọc biển số xe."""
         license_plates = []
+        if self.ocr is None:
+            return license_plates
+            
         for result in results:
             boxes = result.boxes.xyxy.cpu().numpy()
             labels = result.boxes.cls.cpu().numpy()
@@ -104,22 +105,28 @@ class YoloModel:
                     continue
                 # Giả định label 80 là "license plate" (sau khi huấn luyện)
                 if label == 80:
-                    x1, y1, x2, y2 = box.astype(int)
-                    # Cắt khu vực biển số
-                    plate_img = frame[y1:y2, x1:x2]
-                    # Chuyển sang định dạng RGB để dùng PaddleOCR
-                    plate_img_rgb = cv2.cvtColor(plate_img, cv2.COLOR_BGR2RGB)
-                    # Đọc ký tự bằng PaddleOCR
-                    ocr_result = self.ocr.ocr(plate_img_rgb, cls=True)
-                    plate_text = ""
-                    if ocr_result and len(ocr_result) > 0:
-                        for line in ocr_result[0]:
-                            plate_text += line[1][0] + " "
-                    license_plates.append({
-                        "box": (x1, y1, x2, y2),
-                        "text": plate_text.strip(),
-                        "confidence": conf
-                    })
+                    try:
+                        x1, y1, x2, y2 = box.astype(int)
+                        # Cắt khu vực biển số
+                        plate_img = frame[y1:y2, x1:x2]
+                        if plate_img.size == 0:  # Kiểm tra kích thước hợp lệ
+                            continue
+                        # Chuyển sang định dạng RGB để dùng PaddleOCR
+                        plate_img_rgb = cv2.cvtColor(plate_img, cv2.COLOR_BGR2RGB)
+                        # Đọc ký tự bằng PaddleOCR
+                        ocr_result = self.ocr.ocr(plate_img_rgb, cls=True)
+                        plate_text = ""
+                        if ocr_result and len(ocr_result) > 0:
+                            for line in ocr_result[0]:
+                                plate_text += line[1][0] + " "
+                        license_plates.append({
+                            "box": (x1, y1, x2, y2),
+                            "text": plate_text.strip(),
+                            "confidence": conf
+                        })
+                    except Exception as e:
+                        print(f"Error processing license plate: {e}")
+                        continue
         return license_plates
 
     def draw_lanes(self, frame, lane_lines):
@@ -171,8 +178,11 @@ class YoloModel:
 
     def get_frame(self):
         if self.cap and self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if ret:
+            try:
+                ret, frame = self.cap.read()
+                if not ret:
+                    return None, []
+
                 # Chuyển khung hình sang RGB
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 # Dự đoán bằng YOLO
@@ -210,12 +220,19 @@ class YoloModel:
                                     break
                             # Kiểm tra xem phương tiện có vi phạm không
                             if plate_text in violation_plates:
-                                color = (0, 0, 255)  # Đỏ cho phương tiện vi phạm
+                                color = (255, 0, 0)  # Đỏ cho phương tiện vi phạm
                             else:
                                 color = (0, 255, 0)  # Xanh cho phương tiện không vi phạm
                             cv2.rectangle(frame_with_lanes, (x1, y1), (x2, y2), color, 2)
+                            # Thêm text hiển thị loại phương tiện và biển số
+                            vehicle_type = {2: "Ô tô", 3: "Xe máy", 5: "Xe buýt", 7: "Xe tải"}.get(label, "Unknown")
+                            cv2.putText(frame_with_lanes, f"{vehicle_type} - {plate_text}", 
+                                      (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
                 
                 return frame_with_lanes, violations
+            except Exception as e:
+                print(f"Error processing frame: {e}")
+                return None, []
         return None, []
 
     def save_frame(self, frame, image_path):

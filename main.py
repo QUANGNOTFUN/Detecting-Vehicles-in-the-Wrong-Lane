@@ -1,12 +1,14 @@
-import tkinter as tk
+import dearpygui.dearpygui as dpg
 from src.model.yolo_model import YoloModel
 from src.viewmodel.yolo_viewmodel import YoloViewModel
-from src.view.main_view import MainView
-from src.view.report_screen import ReportScreen
+from src.view.main_screen import MainScreen
 
 if __name__ == "__main__":
-    root = tk.Tk()
+
     model = YoloModel(model_path="assets/yolov8n.pt")
+
     viewmodel = YoloViewModel(model)
-    app = MainView(root, viewmodel)
-    root.mainloop()
+
+    app = MainScreen(viewmodel)
+    
+    app.run()

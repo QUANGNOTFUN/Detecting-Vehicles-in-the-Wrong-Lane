@@ -1,5 +1,4 @@
 ultralytics==8.2.0
-opencv-python
-pillow==10.2.0
-paddlepaddle
-paddleocr
+opencv-python>=4.9.0.80
+pillow>=10.0.0
+dearpygui==2.0.0

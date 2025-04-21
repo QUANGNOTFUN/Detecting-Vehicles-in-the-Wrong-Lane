@@ -1,90 +1,109 @@
-import tkinter as tk
-from tkinter import ttk, filedialog
-from PIL import Image, ImageTk
-from .configuration_screen import ConfigurationScreen
+import dearpygui.dearpygui as dpg
+from PIL import Image
+import numpy as np
+import cv2
 
-class MainScreen(tk.Frame):
-    def __init__(self, parent, controller):
-        tk.Frame.__init__(self, parent)
-        self.controller = controller
+class MainScreen:
+    def __init__(self, viewmodel):
+        self.viewmodel = viewmodel
+        # Đăng ký các callback
+        self.viewmodel.set_update_frame_callback(self.update_frame)
+        self.viewmodel.set_update_violations_callback(self.update_violations)
+        self.setup_gui()
 
-        self.menu_frame = tk.Frame(self)
-        self.menu_frame.pack(fill="x")
-        tk.Button(self.menu_frame, text="Main", command=lambda: controller.show_frame("MainScreen")).pack(side="left")
-        tk.Button(self.menu_frame, text="Report", command=lambda: controller.show_frame("ReportScreen")).pack(side="left")
-        tk.Button(self.menu_frame, text="Config", command=lambda: controller.show_frame("ConfigurationScreen")).pack(side="left")
+    def setup_gui(self):
+        # Initialize DearPyGui
+        dpg.create_context()
+        dpg.create_viewport(title="Vehicle Detection System", width=1024, height=768)
+        dpg.setup_dearpygui()
 
-        self.video_label = tk.Label(self, text="No camera or video running", font=("Arial", 12))
-        self.video_label.pack(pady=10)
+        # Main Window
+        with dpg.window(label="Main Window", tag="main_window"):
+            # Menu Bar
+            with dpg.menu_bar():
+                dpg.add_button(label="Main", callback=lambda: self.show_frame("MainScreen"))
+                dpg.add_button(label="Report", callback=lambda: self.show_frame("ReportScreen"))
+                dpg.add_button(label="Config", callback=lambda: self.show_frame("ConfigurationScreen"))
 
-        self.violations_frame = tk.Frame(self)
-        self.violations_frame.pack(fill="both", expand=True)
-        self.tree = ttk.Treeview(self.violations_frame, columns=('Timestamp', 'Vehicle', 'Lane', 'License Plate'), show='headings')
-        self.tree.heading('Timestamp', text='Timestamp')
-        self.tree.heading('Vehicle', text='Vehicle Type')
-        self.tree.heading('Lane', text='Lane ID')
-        self.tree.heading('License Plate', text='License Plate')
-        self.tree.pack(fill="both", expand=True)
-        self.scrollbar = tk.Scrollbar(self.violations_frame, orient='vertical', command=self.tree.yview)
-        self.tree.configure(yscroll=self.scrollbar.set)
-        self.scrollbar.pack(side='right', fill='y')
+            # Video Display
+            with dpg.group(horizontal=False):
+                dpg.add_text("No camera or video running", tag="video_status")
+                with dpg.texture_registry():
+                    dpg.add_raw_texture(width=640, height=480, default_value=np.zeros((480, 640, 3), dtype=np.float32), 
+                                      format=dpg.mvFormat_Float_rgb, tag="video_texture")
+                dpg.add_image("video_texture", width=640, height=480)
 
-        self.button_frame = tk.Frame(self)
-        self.button_frame.pack(pady=10)
-        self.start_button = tk.Button(self.button_frame, text="Start Camera", command=self.controller.viewmodel.start_camera, width=15)
-        self.start_button.grid(row=0, column=0, padx=5)
-        self.video_button = tk.Button(self.button_frame, text="Load Video", command=self.load_video, width=15)
-        self.video_button.grid(row=0, column=1, padx=5)
-        self.stop_button = tk.Button(self.button_frame, text="Stop", command=self.stop_action, width=15, state="disabled")
-        self.stop_button.grid(row=0, column=2, padx=5)
-        self.exit_button = tk.Button(self.button_frame, text="Exit", command=self.controller.close, width=15)
-        self.exit_button.grid(row=0, column=3, padx=5)
-    
-    def update_button_states(self, running):
-        states = self.controller.viewmodel.update_button_states(running)
-        self.start_button.configure(state=states["start_button"])
-        self.video_button.configure(state=states["video_button"])
-        self.stop_button.configure(state=states["stop_button"])
+            # Violations Table
+            with dpg.table(header_row=True, resizable=True, policy=dpg.mvTable_SizingStretchProp,
+                          borders_innerH=True, borders_outerH=True, borders_innerV=True,
+                          borders_outerV=True, tag="violations_table"):
+                dpg.add_table_column(label="Timestamp")
+                dpg.add_table_column(label="Vehicle Type")
+                dpg.add_table_column(label="Lane ID")
+                dpg.add_table_column(label="License Plate")
+
+            # Control Buttons
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Start Camera", callback=self.viewmodel.start_camera, tag="start_button")
+                dpg.add_button(label="Load Video", callback=self.load_video, tag="video_button")
+                dpg.add_button(label="Stop", callback=self.stop_action, tag="stop_button", enabled=False)
+                dpg.add_button(label="Exit", callback=self.exit_app)
+
+        dpg.show_viewport()
+
+    def show_frame(self, frame_name):
+        print(f"Switching to {frame_name}")  # Tạm thời chỉ in ra console
 
     def load_video(self):
-        video_path = filedialog.askopenfilename(
-            filetypes=[("Video files", "*.mp4 *.avi *.mov"), ("All files", "*.*")]
-        )
-        if video_path:
-            self.controller.viewmodel.start_video(video_path)
+        # Open file dialog
+        with dpg.file_dialog(label="Choose Video File", callback=self._video_dialog_callback,
+                            file_count=1, modal=True):
+            dpg.add_file_extension(".mp4", color=(0, 255, 0, 255))
+            dpg.add_file_extension(".avi", color=(0, 255, 0, 255))
+            dpg.add_file_extension(".mov", color=(0, 255, 0, 255))
+            dpg.add_file_extension(".*")
+
+    def _video_dialog_callback(self, sender, app_data):
+        if app_data['file_path_name']:
+            self.viewmodel.start_video(app_data['file_path_name'])
             self.update_button_states(running=True)
 
     def stop_action(self):
-        self.controller.viewmodel.stop_camera()
+        self.viewmodel.stop_camera()
         self.update_button_states(running=False)
 
+    def exit_app(self):
+        self.viewmodel.exit_app()
+        dpg.destroy_context()
+
     def update_button_states(self, running):
-        if running:
-            self.start_button.configure(state="disabled")
-            self.video_button.configure(state="disabled")
-            self.stop_button.configure(state="normal")
-        else:
-            self.start_button.configure(state="normal")
-            self.video_button.configure(state="normal")
-            self.stop_button.configure(state="disabled")
-            self.video_label.configure(image="", text="No camera or video running")
+        dpg.configure_item("start_button", enabled=not running)
+        dpg.configure_item("video_button", enabled=not running)
+        dpg.configure_item("stop_button", enabled=running)
+        if not running:
+            dpg.set_value("video_status", "No camera or video running")
 
     def update_frame(self, frame):
         if frame is not None:
-            img = Image.fromarray(frame)
-            img = img.resize((640, 480), Image.LANCZOS)
-            imgtk = ImageTk.PhotoImage(image=img)
-            self.video_label.imgtk = imgtk
-            self.video_label.configure(image=imgtk, text="")
+            # Convert frame to float32 and normalize to 0-1 range
+            frame = frame.astype(np.float32) / 255.0
+            # Resize frame if needed
+            frame = cv2.resize(frame, (640, 480))
+            dpg.set_value("video_texture", frame.ravel())
+            dpg.set_value("video_status", "")
             self.update_button_states(running=True)
         else:
-            self.video_label.configure(image="", text="No camera or video running")
+            dpg.set_value("video_status", "No camera or video running")
             self.update_button_states(running=False)
 
     def update_violations(self, violation):
-        self.tree.insert('', 'end', values=(
-            violation['timestamp'],
-            violation['vehicle_type'],
-            violation['lane_id'],
-            violation['license_plate']
-        ))
+        with dpg.table_row(parent="violations_table"):
+            dpg.add_text(violation['timestamp'])
+            dpg.add_text(violation['vehicle_type'])
+            dpg.add_text(violation['lane_id'])
+            dpg.add_text(violation['license_plate'])
+
+    def run(self):
+        while dpg.is_dearpygui_running():
+            dpg.render_dearpygui_frame()
+        dpg.destroy_context()
