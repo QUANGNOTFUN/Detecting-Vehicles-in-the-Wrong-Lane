@@ -1,57 +1,48 @@
-# src/ui/features/display/display_screen.py
 import dearpygui.dearpygui as dpg
-import numpy as np
 import cv2
+import numpy as np
+from src.ui.features.display.display_view_model import DisplayViewModel
+import tkinter as tk
+from tkinter import filedialog
 
 class DisplayScreen:
-    def __init__(self, view_model):
+    def __init__(self, view_model: DisplayViewModel):
         self.view_model = view_model
         self.main_screen = None
         self.display_count = 1
-        self.display_states = {}
-        self.current_video = None  # Đường dẫn file video được chọn
+        self.active_cameras = {}
+        self.textures = {}
+        self.is_running = {}
+        self.texture_registry = dpg.add_texture_registry(label="TextureRegistry")
 
     def create_display_panel(self, label, tag_prefix):
-        self.display_states[tag_prefix] = {
-            "running": False,
-            "status_text_id": None,
-            "video_path_id": None,  # Thay video_list_id thành video_path_id để hiển thị đường dẫn
-            "result_text_id": None,
-            "texture_id": None,
-            "last_width": 540,
-            "last_height": 350
-        }
+        with dpg.group(tag=tag_prefix, horizontal=False):
+            with dpg.group(horizontal=True):
+                dpg.add_button(label=label, width=100, callback=lambda: self.update_ui(tag_prefix))
+                dpg.add_button(label="Report chart", width=110)
+                dpg.add_button(label="Config Lane", width=110)
 
-        dpg.add_spacer(height=5)
+            dpg.add_spacer(height=5)
 
-        # Tạo texture để hiển thị video
-        with dpg.texture_registry():
-            self.display_states[tag_prefix]["texture_id"] = dpg.add_dynamic_texture(
-                width=540, height=350, default_value=np.zeros((350, 540, 4), dtype=np.float32)
-            )
+            dpg.add_child_window(tag=f"{tag_prefix}_screen", width=540, height=350, border=True)
+            with dpg.drawlist(width=540, height=350, parent=f"{tag_prefix}_screen", tag=f"{tag_prefix}_drawlist"):
+                dpg.draw_rectangle((0, 0), (540, 350), color=(0, 0, 0, 255), fill=(0, 0, 0, 255))
 
-        # Display area
-        dpg.add_child_window(tag=f"{tag_prefix}_screen", width=540, height=350, border=True)
-        dpg.add_image(self.display_states[tag_prefix]["texture_id"], parent=f"{tag_prefix}_screen")
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Start camera", width=110, callback=lambda: self.start_camera(tag_prefix))
+                dpg.add_button(label="Load", width=110, callback=lambda: self.load_file(tag_prefix))
+                dpg.add_button(label="Stop", width=110, callback=lambda: self.stop_camera(tag_prefix))
+                dpg.add_button(label="Exit", width=110, callback=lambda: self.exit_display(tag_prefix))
 
-        # Status text
-        status_text_id = dpg.add_text(f"[{tag_prefix}] Status: Stopped", tag=f"{tag_prefix}_status")
-        self.display_states[tag_prefix]["status_text_id"] = status_text_id
-
-        # Video path text (thay thế video_list_id)
-        video_path_id = dpg.add_text(f"[{tag_prefix}] Video: None", tag=f"{tag_prefix}_video_path")
-        self.display_states[tag_prefix]["video_path_id"] = video_path_id
-
-        # Result text
-        result_text_id = dpg.add_text(f"[{tag_prefix}] Result: No result yet", tag=f"{tag_prefix}_result")
-        self.display_states[tag_prefix]["result_text_id"] = result_text_id
-
-        # Các nút Load, Start, Stop, Exit
-        with dpg.group(horizontal=True):
-            dpg.add_button(label="Load", width=110, callback=self.load_callback, user_data=tag_prefix)
-            dpg.add_button(label="Start", width=110, callback=self.start_callback, user_data=tag_prefix)
-            dpg.add_button(label="Stop", width=110, callback=self.stop_callback, user_data=tag_prefix)
-            dpg.add_button(label="Exit", width=110, callback=self.exit_callback, user_data=tag_prefix)
+        self.active_cameras[tag_prefix] = None
+        self.is_running[tag_prefix] = False
+        self.textures[tag_prefix] = dpg.add_raw_texture(
+            width=540,
+            height=350,
+            default_value=np.zeros((350, 540, 4), dtype=np.float32),
+            format=dpg.mvFormat_Float_rgba,
+            parent=self.texture_registry
+        )
 
     def create(self):
         with dpg.child_window(parent="DisplayScreen", width=-1, height=-1, horizontal_scrollbar=True):
@@ -66,122 +57,95 @@ class DisplayScreen:
         self.display_count += 1
         tag_prefix = f"display{self.display_count}"
         label = f"Display {self.display_count}"
+
         with dpg.group(parent="display_container"):
             self.create_display_panel(label, tag_prefix)
 
-    def load_callback(self, sender, app_data, user_data):
-        tag_prefix = user_data
-
-        # Callback khi người dùng chọn file
-        def file_dialog_callback(sender, app_data, user_data):
-            tag_prefix = user_data
-            # Lấy đường dẫn file từ file dialog
-            file_path = app_data["file_path_name"]
-            file_name = app_data["file_name"]
-
-            # Kiểm tra định dạng file
-            supported_extensions = (".mp4", ".avi")
-            if not file_name.lower().endswith(supported_extensions):
-                dpg.set_value(self.display_states[tag_prefix]["video_path_id"], f"[{tag_prefix}] Video: Unsupported format")
-                print(f"[{tag_prefix}] Unsupported video format: {file_name}")
+    def start_camera(self, tag_prefix):
+        if self.active_cameras.get(tag_prefix) is None:
+            camera = cv2.VideoCapture(0)
+            if not camera.isOpened():
+                print(f"[{tag_prefix}] Không thể mở camera!")
                 return
+            self.active_cameras[tag_prefix] = camera
+            self.is_running[tag_prefix] = True
+            self.update_camera_frame(tag_prefix)
 
-            # Mở file video
-            self.current_video = file_path
-            if not self.view_model.open_video(self.current_video):
-                dpg.set_value(self.display_states[tag_prefix]["video_path_id"], f"[{tag_prefix}] Video: Failed to load {file_name}")
-                print(f"[{tag_prefix}] Failed to load video: {file_path}")
-            else:
-                dpg.set_value(self.display_states[tag_prefix]["video_path_id"], f"[{tag_prefix}] Video: {file_path}")
-                print(f"[{tag_prefix}] Successfully loaded video: {file_path}")
+    def update_camera_frame(self, tag_prefix):
+        if not self.is_running.get(tag_prefix, False):
+            return
 
-        # Mở file dialog để chọn video
-        with dpg.file_dialog(
-            directory_selector=False,
-            show=True,
-            callback=file_dialog_callback,
-            user_data=tag_prefix,
-            file_count=1,
-            tag=f"{tag_prefix}_file_dialog",
-            width=700,
-            height=400,
-            default_path="C:/",  # Đường dẫn mặc định (có thể thay đổi)
-            modal=True
-        ):
-            # Lọc các file video (.mp4, .avi)
-            dpg.add_file_extension(".mp4", color=(0, 255, 0, 255))
-            dpg.add_file_extension(".avi", color=(0, 255, 0, 255))
+        camera = self.active_cameras.get(tag_prefix)
+        if camera is None:
+            return
 
-    def start_callback(self, sender, app_data, user_data):
-        tag_prefix = user_data
-        if not self.display_states[tag_prefix]["running"] and self.current_video:
-            self.display_states[tag_prefix]["running"] = True
-            dpg.set_value(self.display_states[tag_prefix]["status_text_id"], f"[{tag_prefix}] Status: Running")
-            # Bắt đầu phát video và nhận diện
-            self.play_video(tag_prefix)
-
-    def stop_callback(self, sender, app_data, user_data):
-        tag_prefix = user_data
-        if self.display_states[tag_prefix]["running"]:
-            self.display_states[tag_prefix]["running"] = False
-            dpg.set_value(self.display_states[tag_prefix]["status_text_id"], f"[{tag_prefix}] Status: Stopped")
-            self.view_model.release_video()
-            self.view_model.clear_result()
-            dpg.set_value(self.display_states[tag_prefix]["result_text_id"], f"[{tag_prefix}] Result: No result yet")
-            print(f"[{tag_prefix}] Video playback stopped")
-
-    def exit_callback(self, sender, app_data, user_data):
-        tag_prefix = user_data
-        self.view_model.release_video()
-        dpg.delete_item(f"{tag_prefix}_screen")
-        dpg.delete_item(self.display_states[tag_prefix]["status_text_id"])
-        dpg.delete_item(self.display_states[tag_prefix]["video_path_id"])
-        dpg.delete_item(self.display_states[tag_prefix]["result_text_id"])
-        dpg.delete_item(self.display_states[tag_prefix]["texture_id"])
-        dpg.delete_item(dpg.get_item_parent(f"{tag_prefix}_screen"))
-        del self.display_states[tag_prefix]
-        print(f"[{tag_prefix}] Display panel removed")
-
-    def play_video(self, tag_prefix):
-        def update_frame():
-            if not self.display_states[tag_prefix]["running"]:
-                return
-
-            # Lấy khung hình tiếp theo
-            frame = self.view_model.get_next_frame()
-            if frame is None:
-                self.display_states[tag_prefix]["running"] = False
-                dpg.set_value(self.display_states[tag_prefix]["status_text_id"], f"[{tag_prefix}] Status: Stopped")
-                return
-
-            # Chạy YOLOv8 để nhận diện xe cộ
-            detections = self.main_screen.view_model.detect_vehicles(frame)
-
-            # Vẽ bounding box và nhãn lên khung hình
-            for detection in detections:
-                x1, y1, x2, y2 = detection["bbox"]
-                label = detection["label"]
-                confidence = detection["confidence"]
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"{label} {confidence:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-            # Chuyển khung hình sang định dạng RGBA để hiển thị trong DearPyGui
+        ret, frame = camera.read()
+        if ret:
+            frame = cv2.resize(frame, (540, 350))
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
-            frame_resized = cv2.resize(frame_rgb, (540, 350))
-            frame_normalized = frame_resized.astype(np.float32) / 255.0
+            dpg.set_value(self.textures[tag_prefix], frame_rgb.astype(np.float32) / 255.0)
+            with dpg.drawlist(width=540, height=350, parent=f"{tag_prefix}_screen"):
+                dpg.draw_image(self.textures[tag_prefix], (0, 0), (540, 350))
 
-            # Cập nhật texture
-            dpg.set_value(self.display_states[tag_prefix]["texture_id"], frame_normalized.flatten())
+        if self.is_running.get(tag_prefix, False):
+            dpg.set_timeout(0.033, lambda: self.update_camera_frame(tag_prefix))
 
-            # Cập nhật kết quả nhận diện
-            if detections:
-                result_text = f"Detected {len(detections)} vehicles: " + ", ".join([f"{d['label']} ({d['confidence']:.2f})" for d in detections])
-            else:
-                result_text = "No vehicles detected"
-            dpg.set_value(self.display_states[tag_prefix]["result_text_id"], f"[{tag_prefix}] Result: {result_text}")
+    def load_file(self, tag_prefix):
+        self.stop_camera(tag_prefix)
 
-            # Lên lịch cập nhật khung hình tiếp theo
-            dpg.set_frame_callback(1/30, update_frame)
+        # Sử dụng tkinter để mở File Explorer
+        root = tk.Tk()
+        root.withdraw()  # Ẩn cửa sổ chính của tkinter
+        file_path = filedialog.askopenfilename(
+            title="Select a file",
+            filetypes=[
+                ("Video files", "*.mp4 *.avi"),
+                ("Image files", "*.jpg *.png"),
+                ("All files", "*.*")
+            ],
+            initialdir="::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"  # Mở This PC trên Windows
+        )
+        root.destroy()  # Đóng tkinter sau khi chọn file
 
-        # Bắt đầu phát video
-        update_frame()
+        if file_path:
+            self.load_file_callback(file_path, tag_prefix)
+
+    def load_file_callback(self, file_path, tag_prefix):
+        if file_path.endswith((".mp4", ".avi")):
+            camera = cv2.VideoCapture(file_path)
+            if not camera.isOpened():
+                print(f"[{tag_prefix}] Không thể mở file video: {file_path}")
+                return
+            self.active_cameras[tag_prefix] = camera
+            self.is_running[tag_prefix] = True
+            self.update_camera_frame(tag_prefix)
+        elif file_path.endswith((".jpg", ".png")):
+            image = cv2.imread(file_path)
+            if image is None:
+                print(f"[{tag_prefix}] Không thể mở file hình ảnh: {file_path}")
+                return
+            image = cv2.resize(image, (540, 350))
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
+            dpg.set_value(self.textures[tag_prefix], image_rgb.astype(np.float32) / 255.0)
+            with dpg.drawlist(width=540, height=350, parent=f"{tag_prefix}_screen"):
+                dpg.draw_image(self.textures[tag_prefix], (0, 0), (540, 350))
+
+    def stop_camera(self, tag_prefix):
+        if self.active_cameras.get(tag_prefix) is not None:
+            self.active_cameras[tag_prefix].release()
+            self.active_cameras[tag_prefix] = None
+        self.is_running[tag_prefix] = False
+        with dpg.drawlist(width=540, height=350, parent=f"{tag_prefix}_screen"):
+            dpg.draw_rectangle((0, 0), (540, 350), color=(0, 0, 0, 255), fill=(0, 0, 0, 255))
+
+    def exit_display(self, tag_prefix):
+        self.stop_camera(tag_prefix)
+        dpg.delete_item(self.textures[tag_prefix])
+        del self.textures[tag_prefix]
+        del self.active_cameras[tag_prefix]
+        del self.is_running[tag_prefix]
+        dpg.delete_item(tag_prefix)
+
+    def update_ui(self, tag_prefix):
+        self.view_model.update_data()
+        print(f"[{tag_prefix}] Data updated: {self.view_model.display_data}")
