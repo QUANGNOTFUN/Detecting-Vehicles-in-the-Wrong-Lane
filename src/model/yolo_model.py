@@ -4,6 +4,7 @@ from ultralytics import YOLO
 import os
 import datetime
 from paddleocr import PaddleOCR
+import csv
 
 class YoloModel:
     def __init__(self, model_path):
@@ -14,12 +15,20 @@ class YoloModel:
         self.is_video = False
         self.lane_config = None
         self.detection_threshold = 0.5
-        self.non_vehicle_classes = [0, 1]  # person, bicycle (COCO dataset)
+        self.non_vehicle_classes = [0, 1] 
+        self.csv_file = "violations/violations.csv"
         try:
             self.ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+            self.init_csv()
         except Exception as e:
             print(f"Warning: PaddleOCR initialization failed: {e}")
             self.ocr = None
+
+    def init_csv(self):
+        os.makedirs(os.path.dirname(self.csv_file), exist_ok=True)
+        with open(self.csv_file, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(["Timestamp", "Vehicle Type", "Lane ID", "Image Path", "License Plate", "X Center"])
 
     def update_lane_config(self, config_data):
         self.lane_config = config_data["lanes"]
@@ -46,13 +55,12 @@ class YoloModel:
         self.is_video = False
 
     def segment_road(self, frame, results):
-        """Phân đoạn khu vực đường."""
         road_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
         for result in results:
             boxes = result.boxes.xyxy.cpu().numpy()
             labels = result.boxes.cls.cpu().numpy()
             for box, label in zip(boxes, labels):
-                if label in [2, 3, 5, 7]:  # Xe: coi khu vực xe là một phần của đường
+                if label in [2, 3, 5, 7]: 
                     x1, y1, x2, y2 = box.astype(int)
                     road_mask[y1:y2, x1:x2] = 255
 
@@ -136,8 +144,7 @@ class YoloModel:
                 cv2.line(lane_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)  # Đường đỏ
         return lane_frame
 
-    # yolo_model.py
-    def check_violation(self, results, lane_lines, license_plates):
+    def check_violation(self, results, lane_lines, license_plates, frame):
         violations = []
         if not lane_lines or not self.lane_config:
             return violations
@@ -165,16 +172,31 @@ class YoloModel:
                                 if px1 >= box[0] and px2 <= box[2] and py1 >= box[1] and py2 <= box[3]:
                                     plate_text = plate["text"]
                                     break
-                            violations.append({
+                            violation = {
                                 "timestamp": timestamp,
                                 "vehicle_type": vehicle_type,
                                 "lane_id": lane["lane_id"],
                                 "image_path": image_path,
                                 "license_plate": plate_text,
-                                "x_center": x_center  # Thêm x_center
-                            })
+                                "x_center": x_center
+                            }
+                            violations.append(violation)
+                            self.save_violation_to_csv(violation)
+                            self.save_frame(frame, image_path)
                         break
         return violations
+
+    def save_violation_to_csv(self, violation):
+        with open(self.csv_file, mode='a', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow([
+                violation["timestamp"],
+                violation["vehicle_type"],
+                violation["lane_id"],
+                violation["image_path"],
+                violation["license_plate"],
+                violation["x_center"]
+            ])
 
     def get_frame(self):
         if self.cap and self.cap.isOpened():
@@ -195,7 +217,7 @@ class YoloModel:
                 
                 # Kiểm tra vi phạm và vẽ hộp giới hạn
                 license_plates = self.detect_license_plates(frame, results)
-                violations = self.check_violation(results, self.lane_lines, license_plates)
+                violations = self.check_violation(results, self.lane_lines, license_plates, frame_rgb)
                 
                 # Danh sách các phương tiện vi phạm (theo license plate để tránh trùng lặp)
                 violation_plates = {v["license_plate"] for v in violations}
