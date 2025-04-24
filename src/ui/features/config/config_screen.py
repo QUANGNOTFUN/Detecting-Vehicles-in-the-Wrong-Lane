@@ -174,4 +174,39 @@ class ConfigScreen:
                     callback=self.create_grid_button_callback,
                     width=150
                 )
+                dpg.add_button(
+                    label="Lưu cấu hình",
+                    callback=self.save_config_callback,
+                    width=150
+                )
+
+    def save_config_callback(self, sender, app_data):
+        # Lấy thông tin cấu hình hiện tại
+        num_lanes = self.view_model.config_value
+        lane_configs = self.view_model.lane_vehicle_types
+        
+        # In ra để kiểm tra
+        print("=== Thông tin cấu hình ===")
+        print(f"Số làn đường: {num_lanes}")
+        print("Cấu hình cho từng làn:")
+        for lane, vehicles in lane_configs.items():
+            print(f"{lane}:", end=" ")
+            allowed_vehicles = [v_type for v_type, allowed in vehicles.items() if allowed]
+            print(", ".join(allowed_vehicles))
+        
+        # Thêm thông báo trực quan trên UI
+        success_tag = "save_success_message"
+        if dpg.does_item_exist(success_tag):
+            dpg.delete_item(success_tag)
+        
+        dpg.add_text(
+            "Đã lưu cấu hình thành công!",
+            color=self.colors['success'],
+            parent=self.input_tag,
+            tag=success_tag
+        )
+        
+        # Sau 3 giây sẽ xóa thông báo
+        dpg.set_item_callback(success_tag, lambda: dpg.delete_item(success_tag))
+        dpg.set_item_user_data(success_tag, 3.0)  # thời gian hiển thị
 
