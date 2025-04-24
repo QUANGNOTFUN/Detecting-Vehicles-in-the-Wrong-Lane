@@ -99,9 +99,9 @@ class ConfigScreen:
         if num_lanes <= 0:
             return
 
-        total_width = 600
+        total_width = 655
         num_columns = len(self.view_model.vehicle_types) + 1
-        column_width = total_width // num_columns // 1.2
+        column_width = 100
 
         with dpg.group(tag=self.grid_tag, parent=self.tag):
             dpg.add_text("Cấu hình loại xe cho từng làn đường:", color=(62, 146, 204))
@@ -136,7 +136,7 @@ class ConfigScreen:
                         with dpg.group(horizontal=True):
                             text = f"Làn {i+1}"
                             text_width = dpg.get_text_size(text)[0]
-                            padding = (column_width - text_width) // 2
+                            padding = (column_width - text_width) // 2.5
                             dpg.add_spacer(width=padding)
                             dpg.add_text(text)
                         
@@ -144,7 +144,7 @@ class ConfigScreen:
                         for vehicle_type in self.view_model.vehicle_types:
                             with dpg.group(horizontal=True):
                                 checkbox_width = 20
-                                padding = (column_width - checkbox_width) // 2
+                                padding = (column_width - checkbox_width) // 2.5
                                 dpg.add_spacer(width=padding)
                                 is_checked = self.view_model.lane_vehicle_types.get(lane_name, {}).get(vehicle_type, False)
                                 dpg.add_checkbox(
@@ -165,6 +165,7 @@ class ConfigScreen:
                 dpg.add_text("Số làn xe:", color=(255, 255, 255))
                 dpg.add_input_text(
                     width=100,
+                    decimal=True,
                     callback=self.on_changed_value,
                     default_value=self.view_model.config_value
                 )
