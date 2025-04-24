@@ -2,6 +2,7 @@ import dearpygui.dearpygui as dpg
 import cv2
 import numpy as np
 from src.ui.features.display.display_view_model import DisplayViewModel
+from src.model.yolo_model import YoloModel
 import tkinter as tk
 from tkinter import filedialog
 import threading
@@ -14,14 +15,16 @@ class DisplayScreen:
         self.active_cameras = {}
         self.textures = {}
         self.is_running = {}
+        self.yolo_models = {}
         self.texture_registry = dpg.add_texture_registry(label="TextureRegistry")
+        self.model_path = "../../../assets/yolov8n.pt"  # Cập nhật đường dẫn đến mô hình YOLO
 
     def create_display_panel(self, label, tag_prefix):
         with dpg.group(tag=tag_prefix, horizontal=False):
             with dpg.group(horizontal=True):
                 dpg.add_button(label=label, width=100, callback=lambda: self.update_ui(tag_prefix))
-                dpg.add_button(label="Report chart", width=110)
-                dpg.add_button(label="Config Lane", width=110)
+                dpg.add_button(label="Report chart", width=110, callback=lambda: self.main_screen.show_frame("ChartScreen"))
+                dpg.add_button(label="Config Lane", width=110, callback=lambda: self.main_screen.show_frame("ConfigScreen"))
 
             dpg.add_spacer(height=5)
 
@@ -48,6 +51,7 @@ class DisplayScreen:
 
         self.active_cameras[tag_prefix] = None
         self.is_running[tag_prefix] = False
+        self.yolo_models[tag_prefix] = YoloModel(self.model_path)
 
     def create(self):
         with dpg.child_window(parent="DisplayScreen", width=-1, height=-1, horizontal_scrollbar=True):
@@ -68,26 +72,27 @@ class DisplayScreen:
 
     def start_camera(self, tag_prefix):
         if self.active_cameras.get(tag_prefix) is None:
-            camera = cv2.VideoCapture(0)
-            if not camera.isOpened():
-                print(f"[{tag_prefix}] Không thể mở camera!")
-                return
-            print(f"[{tag_prefix}] Đã mở camera thành công.")
-            self.active_cameras[tag_prefix] = camera
-            self.is_running[tag_prefix] = True
-            threading.Thread(target=self.update_camera_frame, args=(tag_prefix,), daemon=True).start()
+            yolo_model = self.yolo_models.get(tag_prefix)
+            try:
+                yolo_model.start_camera()
+                print(f"[{tag_prefix}] Đã mở camera thành công.")
+                self.active_cameras[tag_prefix] = yolo_model
+                self.is_running[tag_prefix] = True
+                threading.Thread(target=self.update_camera_frame, args=(tag_prefix,), daemon=True).start()
+            except Exception as e:
+                print(f"[{tag_prefix}] Không thể mở camera: {e}")
 
     def update_camera_frame(self, tag_prefix):
         while self.is_running.get(tag_prefix, False):
-            camera = self.active_cameras.get(tag_prefix)
-            if camera is None:
+            yolo_model = self.active_cameras.get(tag_prefix)
+            if yolo_model is None:
                 break
 
-            ret, frame = camera.read()
-            if ret:
+            frame, violations = yolo_model.get_frame()
+            if frame is not None:
                 frame = cv2.resize(frame, (540, 350))
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
-                dpg.set_value(self.textures[tag_prefix], frame_rgb.astype(np.float32) / 255.0)
+                frame_rgba = cv2.cvtColor(frame, cv2.COLOR_RGB2RGBA)
+                dpg.set_value(self.textures[tag_prefix], frame_rgba.astype(np.float32) / 255.0)
 
             cv2.waitKey(1)
 
@@ -111,26 +116,52 @@ class DisplayScreen:
             self.load_file_callback(file_path, tag_prefix)
 
     def load_file_callback(self, file_path, tag_prefix):
+        yolo_model = self.yolo_models.get(tag_prefix)
         if file_path.endswith((".mp4", ".avi")):
-            camera = cv2.VideoCapture(file_path)
-            if not camera.isOpened():
-                print(f"[{tag_prefix}] Không thể mở file video: {file_path}")
-                return
-            self.active_cameras[tag_prefix] = camera
-            self.is_running[tag_prefix] = True
-            threading.Thread(target=self.update_camera_frame, args=(tag_prefix,), daemon=True).start()
+            try:
+                yolo_model.start_camera(file_path)
+                self.active_cameras[tag_prefix] = yolo_model
+                self.is_running[tag_prefix] = True
+                threading.Thread(target=self.update_camera_frame, args=(tag_prefix,), daemon=True).start()
+            except Exception as e:
+                print(f"[{tag_prefix}] Không thể mở file video: {file_path}, {e}")
         elif file_path.endswith((".jpg", ".png")):
             image = cv2.imread(file_path)
             if image is None:
                 print(f"[{tag_prefix}] Không thể mở file hình ảnh: {file_path}")
                 return
-            image = cv2.resize(image, (540, 350))
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
-            dpg.set_value(self.textures[tag_prefix], image_rgb.astype(np.float32) / 255.0)
+            results = yolo_model.detect(image)
+            license_plates = yolo_model.detect_license_plates(image, results)
+            lane_lines = yolo_model.detect_lanes(image, results)
+            frame_with_lanes = yolo_model.draw_lanes(image, lane_lines)
+            violations = yolo_model.check_violation(results, lane_lines, license_plates, frame_with_lanes)
+            violation_plates = {v["license_plate"] for v in violations}
+            for result in results:
+                boxes = result.boxes.xyxy.cpu().numpy()
+                labels = result.boxes.cls.cpu().numpy()
+                confidences = result.boxes.conf.cpu().numpy()
+                for box, label, conf in zip(boxes, labels, confidences):
+                    if conf < yolo_model.detection_threshold or label not in [2, 3, 5, 7]:
+                        continue
+                    x1, y1, x2, y2 = box.astype(int)
+                    plate_text = "Unknown"
+                    for plate in license_plates:
+                        px1, py1, px2, py2 = plate["box"]
+                        if px1 >= x1 and px2 <= x2 and py1 >= y1 and py2 <= y2:
+                            plate_text = plate["text"]
+                            break
+                    color = (255, 0, 0) if plate_text in violation_plates else (0, 255, 0)
+                    cv2.rectangle(frame_with_lanes, (x1, y1), (x2, y2), color, 2)
+                    vehicle_type = {2: "Ô tô", 3: "Xe máy", 5: "Xe buýt", 7: "Xe tải"}.get(label, "Unknown")
+                    cv2.putText(frame_with_lanes, f"{vehicle_type} - {plate_text}", 
+                                (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            image = cv2.resize(frame_with_lanes, (540, 350))
+            image_rgba = cv2.cvtColor(image, cv2.COLOR_RGB2RGBA)
+            dpg.set_value(self.textures[tag_prefix], image_rgba.astype(np.float32) / 255.0)
 
     def stop_camera(self, tag_prefix):
         if self.active_cameras.get(tag_prefix) is not None:
-            self.active_cameras[tag_prefix].release()
+            self.active_cameras[tag_prefix].stop_camera()
             self.active_cameras[tag_prefix] = None
         self.is_running[tag_prefix] = False
         black_screen = np.zeros((350, 540, 4), dtype=np.float32)
@@ -142,6 +173,7 @@ class DisplayScreen:
         del self.textures[tag_prefix]
         del self.active_cameras[tag_prefix]
         del self.is_running[tag_prefix]
+        del self.yolo_models[tag_prefix]
         dpg.delete_item(tag_prefix)
 
     def update_ui(self, tag_prefix):
