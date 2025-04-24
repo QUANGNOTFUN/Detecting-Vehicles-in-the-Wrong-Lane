@@ -48,7 +48,7 @@ class ChartScreen:
         dpg.configure_item(self.tag, show=False)
 
     def update_ui(self):
-        # Update the line chart with new data from view_model
+
         hours = list(range(24))
         dpg.set_value(self.line_series_tag, [hours, self.view_model.hourly_violations])
 
