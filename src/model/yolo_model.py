@@ -7,19 +7,21 @@ from paddleocr import PaddleOCR
 import csv
 
 class YoloModel:
-    def __init__(self, model_path):
+    def __init__(self, model_path, config_view_model):
         self.model = YOLO(model_path)
         self.cap = None
-        self.lane_lines = None
         self.video_path = None
         self.is_video = False
+        self.config_view_model = config_view_model
         self.lane_config = None
+        self.num_lanes = 0
         self.detection_threshold = 0.5
-        self.non_vehicle_classes = [0, 1] 
+        self.non_vehicle_classes = [0, 1]
         self.csv_file = "violations/violations.csv"
+        self.init_csv()
+        self.load_config()
         try:
             self.ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
-            self.init_csv()
         except Exception as e:
             print(f"Warning: PaddleOCR initialization failed: {e}")
             self.ocr = None
@@ -30,9 +32,11 @@ class YoloModel:
             writer = csv.writer(file)
             writer.writerow(["Timestamp", "Vehicle Type", "Lane ID", "Image Path", "License Plate", "X Center"])
 
-    def update_lane_config(self, config_data):
-        self.lane_config = config_data["lanes"]
-        self.detection_threshold = config_data["detection_threshold"]
+    def load_config(self):
+        config = self.config_view_model.get_config()
+        self.lane_config = config["lanes"]
+        self.num_lanes = config["num_lanes"]
+        self.detection_threshold = config["detection_threshold"]
 
     def start_camera(self, video_path=None):
         self.stop_camera()
@@ -54,52 +58,7 @@ class YoloModel:
         self.video_path = None
         self.is_video = False
 
-    def segment_road(self, frame, results):
-        road_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-        for result in results:
-            boxes = result.boxes.xyxy.cpu().numpy()
-            labels = result.boxes.cls.cpu().numpy()
-            for box, label in zip(boxes, labels):
-                if label in [2, 3, 5, 7]: 
-                    x1, y1, x2, y2 = box.astype(int)
-                    road_mask[y1:y2, x1:x2] = 255
-
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        lower_road = np.array([0, 0, 50])
-        upper_road = np.array([180, 50, 200])
-        color_road_mask = cv2.inRange(hsv, lower_road, upper_road)
-
-        non_road_mask = np.zeros_like(road_mask)
-        for result in results:
-            boxes = result.boxes.xyxy.cpu().numpy()
-            labels = result.boxes.cls.cpu().numpy()
-            for box, label in zip(boxes, labels):
-                if label in self.non_vehicle_classes:
-                    x1, y1, x2, y2 = box.astype(int)
-                    non_road_mask[y1:y2, x1:x2] = 255
-
-        road_mask = cv2.bitwise_or(road_mask, color_road_mask)
-        road_mask = cv2.bitwise_and(road_mask, cv2.bitwise_not(non_road_mask))
-        road_mask = cv2.morphologyEx(road_mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-        return road_mask
-
-    def detect_lanes(self, frame, results):
-        road_mask = self.segment_road(frame, results)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blur, 50, 150)
-        masked_edges = cv2.bitwise_and(edges, road_mask)
-        lines = cv2.HoughLinesP(masked_edges, 1, np.pi/180, threshold=50, minLineLength=50, maxLineGap=100)
-        lane_lines = []
-        if lines is not None:
-            for line in lines:
-                x1, y1, x2, y2 = line[0]
-                if abs(x2 - x1) > 20 or abs(y2 - y1) > 20:
-                    lane_lines.append((x1, y1, x2, y2))
-        return lane_lines
-
     def detect_license_plates(self, frame, results):
-        """Phát hiện và đọc biển số xe."""
         license_plates = []
         if self.ocr is None:
             return license_plates
@@ -111,17 +70,13 @@ class YoloModel:
             for box, label, conf in zip(boxes, labels, confidences):
                 if conf < self.detection_threshold:
                     continue
-                # Giả định label 80 là "license plate" (sau khi huấn luyện)
                 if label == 80:
                     try:
                         x1, y1, x2, y2 = box.astype(int)
-                        # Cắt khu vực biển số
                         plate_img = frame[y1:y2, x1:x2]
-                        if plate_img.size == 0:  # Kiểm tra kích thước hợp lệ
+                        if plate_img.size == 0:
                             continue
-                        # Chuyển sang định dạng RGB để dùng PaddleOCR
                         plate_img_rgb = cv2.cvtColor(plate_img, cv2.COLOR_BGR2RGB)
-                        # Đọc ký tự bằng PaddleOCR
                         ocr_result = self.ocr.ocr(plate_img_rgb, cls=True)
                         plate_text = ""
                         if ocr_result and len(ocr_result) > 0:
@@ -137,19 +92,30 @@ class YoloModel:
                         continue
         return license_plates
 
-    def draw_lanes(self, frame, lane_lines):
-        lane_frame = frame.copy()
-        if lane_lines:
-            for x1, y1, x2, y2 in lane_lines:
-                cv2.line(lane_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)  # Đường đỏ
-        return lane_frame
-
-    def check_violation(self, results, lane_lines, license_plates, frame):
+    def check_violation(self, results, license_plates, frame):
         violations = []
-        if not lane_lines or not self.lane_config:
+        if not self.lane_config or self.num_lanes <= 0:
+            print("Không có lane_config hoặc num_lanes hợp lệ, không thể kiểm tra vi phạm.")
             return violations
 
-        frame_width = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH) if self.cap else 640
+        frame_height, frame_width, _ = frame.shape
+        print(f"Kích thước khung hình: width={frame_width}, height={frame_height}")
+
+        lane_width = frame_width / self.num_lanes if self.num_lanes > 0 else frame_width
+
+        dynamic_lanes = []
+        for i, lane in enumerate(self.lane_config):
+            lane_id = lane["lane_id"]
+            x_min = i * lane_width
+            x_max = (i + 1) * lane_width
+            dynamic_lanes.append({
+                "lane_id": lane_id,
+                "x_min": x_min,
+                "x_max": x_max,
+                "allowed_vehicles": lane["allowed_vehicles"]
+            })
+            print(f"Làn {lane_id}: x_min={x_min}, x_max={x_max}, allowed_vehicles={lane['allowed_vehicles']}")
+
         for result in results:
             boxes = result.boxes.xyxy.cpu().numpy()
             labels = result.boxes.cls.cpu().numpy()
@@ -159,9 +125,15 @@ class YoloModel:
                     continue
                 if label not in [2, 3, 5, 7]:
                     continue
+
                 x_center = (box[0] + box[2]) / 2
-                for lane in self.lane_config:
+                print(f"Phương tiện: label={label}, x_center={x_center}")
+
+                lane_found = False
+                for lane in dynamic_lanes:
                     if lane["x_min"] <= x_center <= lane["x_max"]:
+                        lane_found = True
+                        print(f"Phương tiện nằm trong Làn {lane['lane_id']}: x_min={lane['x_min']}, x_max={lane['x_max']}, allowed_vehicles={lane['allowed_vehicles']}")
                         if label not in lane["allowed_vehicles"]:
                             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             image_path = f"frames/frame_{timestamp.replace(':', '-')}.jpg"
@@ -184,6 +156,10 @@ class YoloModel:
                             self.save_violation_to_csv(violation)
                             self.save_frame(frame, image_path)
                         break
+
+                if not lane_found:
+                    print(f"Phương tiện không nằm trong làn nào: x_center={x_center}")
+
         return violations
 
     def save_violation_to_csv(self, violation):
@@ -205,24 +181,14 @@ class YoloModel:
                 if not ret:
                     return None, []
 
-                # Chuyển khung hình sang RGB
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                # Dự đoán bằng YOLO
                 results = self.model.predict(source=frame, save=False)
                 
-                # Phát hiện làn đường
-                self.lane_lines = self.detect_lanes(frame, results)
-                # Vẽ vạch kẻ đường màu đỏ
-                frame_with_lanes = self.draw_lanes(frame_rgb, self.lane_lines)
-                
-                # Kiểm tra vi phạm và vẽ hộp giới hạn
                 license_plates = self.detect_license_plates(frame, results)
-                violations = self.check_violation(results, self.lane_lines, license_plates, frame_rgb)
+                violations = self.check_violation(results, license_plates, frame_rgb)
                 
-                # Danh sách các phương tiện vi phạm (theo license plate để tránh trùng lặp)
                 violation_plates = {v["license_plate"] for v in violations}
                 
-                # Vẽ hộp giới hạn cho phương tiện
                 for result in results:
                     boxes = result.boxes.xyxy.cpu().numpy()
                     labels = result.boxes.cls.cpu().numpy()
@@ -230,28 +196,24 @@ class YoloModel:
                     for box, label, conf in zip(boxes, labels, confidences):
                         if conf < self.detection_threshold:
                             continue
-                        # Chỉ vẽ hộp cho các phương tiện (labels 2, 3, 5, 7)
-                        if label in [2, 3, 5, 7]:  # Ô tô, xe máy, xe buýt, xe tải
+                        if label in [2, 3, 5, 7]:
                             x1, y1, x2, y2 = box.astype(int)
-                            # Tìm biển số tương ứng với phương tiện
                             plate_text = "Unknown"
                             for plate in license_plates:
                                 px1, py1, px2, py2 = plate["box"]
                                 if px1 >= x1 and px2 <= x2 and py1 >= y1 and py2 <= y2:
                                     plate_text = plate["text"]
                                     break
-                            # Kiểm tra xem phương tiện có vi phạm không
                             if plate_text in violation_plates:
-                                color = (255, 0, 0)  # Đỏ cho phương tiện vi phạm
+                                color = (255, 255, 0)
                             else:
-                                color = (0, 255, 0)  # Xanh cho phương tiện không vi phạm
-                            cv2.rectangle(frame_with_lanes, (x1, y1), (x2, y2), color, 2)
-                            # Thêm text hiển thị loại phương tiện và biển số
+                                color = (0, 255, 0)
+                            cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), color, 2)
                             vehicle_type = {2: "Ô tô", 3: "Xe máy", 5: "Xe buýt", 7: "Xe tải"}.get(label, "Unknown")
-                            cv2.putText(frame_with_lanes, f"{vehicle_type} - {plate_text}", 
+                            cv2.putText(frame_rgb, f"{vehicle_type} - {plate_text}", 
                                       (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
                 
-                return frame_with_lanes, violations
+                return frame_rgb, violations
             except Exception as e:
                 print(f"Error processing frame: {e}")
                 return None, []

@@ -28,10 +28,8 @@ class ChartScreen:
                 with dpg.plot(label="Số lượng xe", height=300, width=400):
                     x_axis = dpg.add_plot_axis(dpg.mvXAxis, label="Loại xe")
                     with dpg.plot_axis(dpg.mvYAxis, label="Số lượng xe"):
-                        # Use view_model.vehicle_counts for the bar chart
                         x_positions = list(range(len(self.view_model.vehicle_types)))  # [0, 1, 2, 3, 4]
                         dpg.add_bar_series(x_positions, self.view_model.vehicle_counts, label="Số lượng", tag=self.bar_series_tag)
-                # Add a manual label below the chart to indicate vehicle types
                 labels_text = " ".join([f"{i}: {label}" for i, label in enumerate(self.view_model.vehicle_types)])
                 dpg.add_text(labels_text)
 

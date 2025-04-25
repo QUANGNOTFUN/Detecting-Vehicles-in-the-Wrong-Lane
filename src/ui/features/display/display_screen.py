@@ -8,8 +8,9 @@ from tkinter import filedialog
 import threading
 
 class DisplayScreen:
-    def __init__(self, view_model: DisplayViewModel):
+    def __init__(self, view_model: DisplayViewModel, config_view_model):
         self.view_model = view_model
+        self.config_view_model = config_view_model
         self.main_screen = None
         self.display_count = 1
         self.active_cameras = {}
@@ -17,7 +18,7 @@ class DisplayScreen:
         self.is_running = {}
         self.yolo_models = {}
         self.texture_registry = dpg.add_texture_registry(label="TextureRegistry")
-        self.model_path = "../../../assets/yolov8n.pt"  # Cập nhật đường dẫn đến mô hình YOLO
+        self.model_path = "yolov8m.pt"  # Cập nhật đường dẫn đến mô hình YOLO
 
     def create_display_panel(self, label, tag_prefix):
         with dpg.group(tag=tag_prefix, horizontal=False):
@@ -28,9 +29,8 @@ class DisplayScreen:
 
             dpg.add_spacer(height=5)
 
-            dpg.add_child_window(tag=f"{tag_prefix}_screen", width=540, height=350, border=True)
+            dpg.add_child_window(tag=f"{tag_prefix}_screen", width=640, height=350, border=True)
             
-            # Khởi tạo texture và image ngay từ đầu
             self.textures[tag_prefix] = dpg.add_raw_texture(
                 width=540,
                 height=350,
@@ -51,7 +51,8 @@ class DisplayScreen:
 
         self.active_cameras[tag_prefix] = None
         self.is_running[tag_prefix] = False
-        self.yolo_models[tag_prefix] = YoloModel(self.model_path)
+        # Truyền ConfigViewModel vào YoloModel thay vì config_path
+        self.yolo_models[tag_prefix] = YoloModel(self.model_path, self.config_view_model)
 
     def create(self):
         with dpg.child_window(parent="DisplayScreen", width=-1, height=-1, horizontal_scrollbar=True):
@@ -132,9 +133,7 @@ class DisplayScreen:
                 return
             results = yolo_model.detect(image)
             license_plates = yolo_model.detect_license_plates(image, results)
-            lane_lines = yolo_model.detect_lanes(image, results)
-            frame_with_lanes = yolo_model.draw_lanes(image, lane_lines)
-            violations = yolo_model.check_violation(results, lane_lines, license_plates, frame_with_lanes)
+            violations = yolo_model.check_violation(results, license_plates, image)
             violation_plates = {v["license_plate"] for v in violations}
             for result in results:
                 boxes = result.boxes.xyxy.cpu().numpy()
@@ -151,11 +150,11 @@ class DisplayScreen:
                             plate_text = plate["text"]
                             break
                     color = (255, 0, 0) if plate_text in violation_plates else (0, 255, 0)
-                    cv2.rectangle(frame_with_lanes, (x1, y1), (x2, y2), color, 2)
+                    cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
                     vehicle_type = {2: "Ô tô", 3: "Xe máy", 5: "Xe buýt", 7: "Xe tải"}.get(label, "Unknown")
-                    cv2.putText(frame_with_lanes, f"{vehicle_type} - {plate_text}", 
+                    cv2.putText(image, f"{vehicle_type} - {plate_text}", 
                                 (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            image = cv2.resize(frame_with_lanes, (540, 350))
+            image = cv2.resize(image, (540, 350))
             image_rgba = cv2.cvtColor(image, cv2.COLOR_RGB2RGBA)
             dpg.set_value(self.textures[tag_prefix], image_rgba.astype(np.float32) / 255.0)
 
